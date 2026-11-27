@@ -17,7 +17,13 @@ function Destination({ to, className, children }) {
   );
 }
 
-export default function ReviewWorkspaceLayout({ children, homePath, reportPath }) {
+export default function ReviewWorkspaceLayout({
+  children,
+  homePath,
+  reportPath,
+  headerStart,
+  waveSrc = wave,
+}) {
   return (
     <div className="@container bg-white lg:grid lg:min-h-dvh lg:place-items-center">
       <div className="review-workspace min-h-dvh bg-[#f7f9fc] font-['Pretendard',sans-serif] text-[#172b4d] lg:grid lg:min-h-[calc(780*var(--review-pixel))] lg:w-[calc(1280*var(--review-pixel))] lg:grid-cols-[calc(212*var(--review-pixel))_minmax(0,1fr)]">
@@ -57,14 +63,15 @@ export default function ReviewWorkspaceLayout({ children, homePath, reportPath }
             </Destination>
           </nav>
           <img
-            src={wave}
+            src={waveSrc}
             alt=""
             width={292}
             className="pointer-events-none absolute bottom-[calc(20*var(--review-pixel))] left-1/2 hidden w-[calc(292*var(--review-pixel))] max-w-none -translate-x-1/2 lg:block"
           />
         </aside>
         <div className="min-w-0">
-          <header className="flex h-[calc(57*var(--review-pixel))] items-start justify-end border-b border-[#e2e8f0] px-4 pt-[calc(4*var(--review-pixel))] lg:pr-[calc(34*var(--review-pixel))]">
+          <header className="flex h-[calc(57*var(--review-pixel))] items-start justify-end border-b border-[#e2e8f0] px-4 pt-[calc(4*var(--review-pixel))] lg:pr-[calc(34*var(--review-pixel))] lg:pl-[calc(40*var(--review-pixel))]">
+            {headerStart}
             <Destination
               to={homePath}
               className="flex h-[calc(44*var(--review-pixel))] w-[calc(132*var(--review-pixel))] items-center gap-[calc(6*var(--review-pixel))] px-[calc(12*var(--review-pixel))] text-[length:calc(13*var(--review-pixel))] leading-[calc(20*var(--review-pixel))] whitespace-nowrap text-[#0067ac]"
