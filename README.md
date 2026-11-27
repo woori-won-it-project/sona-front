@@ -78,6 +78,12 @@ npm run dev
 브라우저에서 http://localhost:5173 에 접속하면 로그인 화면이 열립니다.
 백엔드 연결은 http://localhost:5173/health 에서 확인합니다. 백엔드가 꺼져 있으면 "서버 연결 실패"가 표시됩니다.
 
+문서 등록은 개발 서버의 [목업 미리보기](http://localhost:5173/documents?mock=1)에서 테스트할 수 있습니다. 이 모드에서는 파일을 서버로 전송하지 않습니다. 다음 링크에서는 지정한 단계가 처음 한 번 실패하고 이후 시도는 성공합니다.
+
+- [업로드 실패와 재시도](http://localhost:5173/documents?mock=1&scenario=upload-error)
+- [읽을 수 없는 PDF](http://localhost:5173/documents?mock=1&scenario=unreadable) · [암호 PDF](http://localhost:5173/documents?mock=1&scenario=encrypted)
+- [파일 저장 실패](http://localhost:5173/documents?mock=1&scenario=save-error) · [저장 후 분석 요청 실패](http://localhost:5173/documents?mock=1&scenario=analysis-error)
+
 ### 스크립트
 
 | 명령                   | 설명                    |

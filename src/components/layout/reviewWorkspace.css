@@ -1,0 +1,10 @@
+.review-workspace {
+  --review-pixel: 1px;
+}
+
+@media (width >= 64rem) {
+  .review-workspace {
+    /* Keep the Figma frame's scale while fitting the available width and height. */
+    --review-pixel: min(calc(100cqw / 1280), calc(100dvh / 780));
+  }
+}
