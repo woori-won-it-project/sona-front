@@ -1,0 +1,17 @@
+@font-face {
+  font-family: Pretendard;
+  src: url('../assets/PretendardVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+.login-grid {
+  --login-pixel: 1px;
+}
+
+@media (width >= 64rem) {
+  .login-grid {
+    /* Fit the complete 1280 × 780 frame inside the visible viewport. */
+    --login-pixel: min(calc(100cqw / 1280), calc(100dvh / 780));
+  }
+}

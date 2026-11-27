@@ -75,8 +75,8 @@ docker compose -f infra/docker-compose.yml --env-file .env --profile app up -d -
 npm run dev
 ```
 
-브라우저에서 http://localhost:5173 접속 → 홈 화면에서 백엔드 health 결과를 확인합니다.
-백엔드가 꺼져 있으면 "서버 연결 실패"가 표시됩니다.
+브라우저에서 http://localhost:5173 에 접속하면 로그인 화면이 열립니다.
+백엔드 연결은 http://localhost:5173/health 에서 확인합니다. 백엔드가 꺼져 있으면 "서버 연결 실패"가 표시됩니다.
 
 ### 스크립트
 
