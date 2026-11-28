@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { questionTypes } from '@/pages/questionSelectionState';
+import { canManageQuestion, questionTypes } from '@/pages/questionSelectionState';
 
 const card = 'rounded-[calc(14*var(--q))] border border-[#e2e8f0] shadow-[0_2px_8px_#172b4d14]';
 const action =
@@ -17,7 +17,7 @@ function QuestionItem({
   onRemove,
 }) {
   const titleId = useId();
-  const custom = question.type === 'custom';
+  const custom = question.type === 'MANUAL';
   return (
     <li
       className={
@@ -60,7 +60,7 @@ function QuestionItem({
         </div>
       </div>
       <div className="flex justify-end gap-[calc(12*var(--q))]">
-        {custom ? (
+        {canManageQuestion(question) && (
           <>
             <button
               type="button"
@@ -79,7 +79,8 @@ function QuestionItem({
               삭제
             </button>
           </>
-        ) : (
+        )}
+        {!custom && (
           <button
             type="button"
             aria-expanded={open}
@@ -98,6 +99,7 @@ function QuestionItem({
 
 export default function QuestionList({
   list,
+  ready,
   questions,
   selectedIds,
   evidenceId,
@@ -119,18 +121,18 @@ export default function QuestionList({
         </h2>
         <button
           type="button"
-          disabled={disabled || !list.isSuccess}
+          disabled={disabled || !ready}
           onClick={onAdd}
           className="h-[calc(37*var(--q))] min-w-[calc(128*var(--q))] rounded-[calc(10*var(--q))] bg-[#0067ac] px-2 text-[length:calc(14*var(--q))] font-semibold whitespace-nowrap text-white shadow-[0_2px_4px_#172b4d17] disabled:opacity-60"
         >
-          {questions.some(({ type }) => type === 'custom') ? '+ 질문 추가' : '+ 직접 질문 작성'}
+          {questions.some(({ type }) => type === 'MANUAL') ? '+ 질문 추가' : '+ 직접 질문 작성'}
         </button>
       </div>
       <div
         className="mt-[calc(13*var(--q))] min-h-0 overflow-y-auto p-px"
-        aria-busy={list.isPending}
+        aria-busy={list.isFetching}
       >
-        {list.isPending && (
+        {!ready && list.isFetching && (
           <p role="status" className="text-[#64748b]">
             검증 질문을 불러오고 있어요.
           </p>
@@ -148,7 +150,7 @@ export default function QuestionList({
             </button>
           </div>
         )}
-        {list.isSuccess && list.data.questions.length === 0 && (
+        {ready && questions.length === 0 && (
           <p className="text-[length:calc(15*var(--q))] text-[#64748b]">
             추천된 검증 질문이 없어요. 직접 질문을 작성해 주세요.
           </p>
@@ -173,12 +175,9 @@ export default function QuestionList({
 function EvidenceDetails({ details }) {
   return (
     <div className="text-[length:calc(14*var(--q))] leading-[calc(22*var(--q))] wrap-anywhere">
-      {(details.basis || details.mock) && (
+      {details.mock && (
         <p className="mb-[calc(22*var(--q))] flex flex-wrap items-baseline gap-x-[calc(8*var(--q))]">
-          {details.basis}
-          {details.mock && (
-            <span className="text-[length:calc(12*var(--q))] text-[#64748b]">목업 예시</span>
-          )}
+          <span className="text-[length:calc(12*var(--q))] text-[#64748b]">목업 예시</span>
         </p>
       )}
       {details.sections.map(({ label, entries }) => (
@@ -187,9 +186,11 @@ function EvidenceDetails({ details }) {
           <ul className="mt-[calc(8*var(--q))] space-y-[calc(14*var(--q))]">
             {entries.map(({ id, title, text }) => (
               <li key={id}>
-                <p className="text-[length:calc(17*var(--q))] leading-[calc(23*var(--q))] font-semibold">
-                  {title}
-                </p>
+                {title && (
+                  <p className="text-[length:calc(17*var(--q))] leading-[calc(23*var(--q))] font-semibold">
+                    {title}
+                  </p>
+                )}
                 {text && <p className="mt-[calc(10*var(--q))] text-[#64748b]">{text}</p>}
               </li>
             ))}
@@ -199,7 +200,9 @@ function EvidenceDetails({ details }) {
       {details.references.length > 0 && (
         <ul aria-label="참고" className="mt-[calc(28*var(--q))] space-y-[calc(4*var(--q))]">
           {details.references.map((reference) => (
-            <li key={reference}>참고 · {reference}</li>
+            <li key={reference} className="break-all">
+              참고 · {reference}
+            </li>
           ))}
         </ul>
       )}

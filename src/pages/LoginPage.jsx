@@ -9,13 +9,22 @@ export default function LoginPage({ onLoginSuccess }) {
   const [employeeNumber, setEmployeeNumber] = useState('');
   const [password, setPassword] = useState('');
   const [touched, setTouched] = useState({ employeeNumber: false, password: false });
-  const { submitLogin, pending, loginError, clearLoginError } = useLogin(onLoginSuccess);
-  const canSubmit = Boolean(employeeNumber && password) && !pending;
+  const login = useLogin(() => {
+    setPassword('');
+    setTouched({ employeeNumber: false, password: false });
+    return onLoginSuccess?.();
+  });
+  const { pending, complete, csrfReady, csrfPreparing, csrfError, loginError } = login;
+  const canSubmit = Boolean(employeeNumber && password) && csrfReady && !pending && !complete;
+  const error = csrfPreparing ? '' : csrfError || loginError;
+  const feedback = csrfPreparing
+    ? '로그인 연결을 준비하고 있어요.'
+    : error || (complete ? '로그인되었습니다.' : '사번과 비밀번호를 입력하세요.');
 
   function submit(event) {
     event.preventDefault();
     if (!canSubmit) return;
-    void submitLogin({ employeeNumber, password });
+    void login.submitLogin({ employeeNumber, password });
   }
 
   return (
@@ -58,16 +67,24 @@ export default function LoginPage({ onLoginSuccess }) {
               사번 로그인
             </h2>
             <p
-              role={loginError ? 'alert' : undefined}
-              className={`mt-2 min-h-[calc(19*var(--login-pixel))] text-[length:calc(16*var(--login-pixel))] leading-[calc(19*var(--login-pixel))] lg:mt-[calc(18*var(--login-pixel))] ${loginError ? 'text-[#dc2626]' : 'text-[#64748b]'}`}
+              className={`mt-2 min-h-[calc(19*var(--login-pixel))] text-[length:calc(16*var(--login-pixel))] leading-[calc(19*var(--login-pixel))] lg:mt-[calc(18*var(--login-pixel))] ${error ? 'text-[#dc2626]' : 'text-[#64748b]'}`}
             >
-              {loginError || '사번과 비밀번호를 입력하세요.'}
+              <span role={error ? 'alert' : 'status'}>{feedback}</span>
+              {csrfError && !csrfPreparing && (
+                <button
+                  type="button"
+                  onClick={() => void login.retryCsrf()}
+                  className="ml-2 font-semibold text-[#0067ac] underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0067ac]"
+                >
+                  다시 시도
+                </button>
+              )}
             </p>
 
             <form
               onSubmit={submit}
               noValidate
-              aria-busy={pending}
+              aria-busy={pending || csrfPreparing}
               className="mt-6 lg:mt-[calc(39*var(--login-pixel))]"
             >
               <LoginField
@@ -78,12 +95,12 @@ export default function LoginPage({ onLoginSuccess }) {
                 inputMode="numeric"
                 autoComplete="username"
                 value={employeeNumber}
-                disabled={pending}
+                disabled={pending || complete}
                 placeholder="사번 입력"
                 error={touched.employeeNumber && !employeeNumber ? '사번을 입력해 주세요.' : ''}
                 onChange={(event) => {
                   setEmployeeNumber(normalizeEmployeeNumber(event.target.value));
-                  clearLoginError();
+                  login.clearLoginError();
                 }}
                 onBlur={() => setTouched((current) => ({ ...current, employeeNumber: true }))}
               />
@@ -96,12 +113,12 @@ export default function LoginPage({ onLoginSuccess }) {
                 type="password"
                 autoComplete="current-password"
                 value={password}
-                disabled={pending}
+                disabled={pending || complete}
                 placeholder="비밀번호 입력"
                 error={touched.password && !password ? '비밀번호를 입력해 주세요.' : ''}
                 onChange={(event) => {
                   setPassword(event.target.value);
-                  clearLoginError();
+                  login.clearLoginError();
                 }}
                 onBlur={() => setTouched((current) => ({ ...current, password: true }))}
               />
@@ -111,7 +128,7 @@ export default function LoginPage({ onLoginSuccess }) {
                 disabled={!canSubmit}
                 className="mt-6 block h-[calc(51*var(--login-pixel))] w-full rounded-[calc(10*var(--login-pixel))] bg-[#0067ac] text-[length:calc(17*var(--login-pixel))] font-medium text-white shadow-[0_2px_4px_rgba(23,43,77,0.09)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0067ac] enabled:hover:bg-[#005b99] disabled:cursor-not-allowed disabled:text-[length:calc(18*var(--login-pixel))] lg:mt-[calc(52*var(--login-pixel))]"
               >
-                {pending ? '로그인 중…' : '로그인'}
+                {pending ? '로그인 중…' : complete ? '로그인 완료' : '로그인'}
               </button>
             </form>
           </div>

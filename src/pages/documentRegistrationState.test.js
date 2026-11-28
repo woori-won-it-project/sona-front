@@ -1,135 +1,138 @@
-import { QueryClient } from '@tanstack/react-query';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  canStartAnalysis,
-  changeRegisteredDocument,
-  createDocumentDraft,
-  documentDraftKey,
+  createRegistrationSubmission,
+  documentReviewKey,
+  documentReviewPath,
+  documentSize,
+  hasRequiredDocuments,
   maxDocumentBytes,
-  saveAndStartAnalysis,
-  uploadAndRegister,
-  uploadErrorKind,
+  registrationFailure,
+  reviewDocuments,
   validateDocumentFiles,
 } from './documentRegistrationState';
 
-const file = { name: 'summary.PDF', type: 'application/pdf', size: 100, lastModified: 7 };
-const summary = { ...file, id: 'summary-asset' };
-const policy = { id: 'policy-asset', name: 'policy.pdf', size: 120, lastModified: 9 };
+const makePdf = (name) =>
+  new File(['%PDF-1.4'], name, { type: 'application/pdf', lastModified: 1 });
+const files = { policy: makePdf('terms.pdf'), summary: makePdf('guide.pdf') };
+afterEach(() => vi.unstubAllGlobals());
 
-function completeDraft() {
-  const draft = changeRegisteredDocument(createDocumentDraft(), 'summary', summary);
-  return changeRegisteredDocument(draft, 'policy', policy);
-}
-
-describe('document registration', () => {
-  it('accepts a PDF at the limit and rejects invalid types, size, count, and duplicates', () => {
-    expect(validateDocumentFiles([{ ...file, size: maxDocumentBytes }])).toBeNull();
-    expect(validateDocumentFiles([{ ...file, type: '' }])).toBeNull();
-    expect(validateDocumentFiles([{ ...file, name: 'summary.txt' }])).toBe('type');
-    expect(validateDocumentFiles([{ ...file, type: 'text/plain' }])).toBe('type');
-    expect(validateDocumentFiles([{ ...file, size: maxDocumentBytes + 1 }])).toBe('size');
-    expect(validateDocumentFiles([file, file])).toBe('count');
-    expect(validateDocumentFiles([file], summary)).toBe('duplicate');
-    expect(validateDocumentFiles([file], { ...summary, lastModified: 8 })).toBeNull();
+describe('document registration state', () => {
+  it('requires both documents, one nonempty PDF per field, and at most 20 MB per file', () => {
+    expect(hasRequiredDocuments({ policy: files.policy })).toBe(false);
+    expect(hasRequiredDocuments(files)).toBe(true);
+    const atLimit = { name: 'sample.PDF', type: 'application/pdf', size: maxDocumentBytes };
+    expect(validateDocumentFiles([atLimit])).toBeNull();
+    expect(validateDocumentFiles([{ ...atLimit, size: maxDocumentBytes + 1 }])).toBe('size');
+    expect(validateDocumentFiles([new File(['x'], 'sample.txt')])).toBe('type');
+    expect(validateDocumentFiles([new File(['x'], 'sample.pdf', { type: 'text/plain' })])).toBe(
+      'type',
+    );
+    expect(validateDocumentFiles([new File([], 'sample.pdf')])).toBe('empty');
+    expect(validateDocumentFiles([files.policy, files.summary])).toBe('count');
+    expect(validateDocumentFiles([files.policy], files.policy)).toBe('duplicate');
+    expect(validateDocumentFiles([files.summary], files.policy)).toBeNull();
   });
 
-  it('keeps the existing attachment on a failed replacement and commits a successful retry', async () => {
-    let draft = completeDraft();
-    const nextFile = { ...file, name: 'replacement.pdf' };
-    const replacement = { ...nextFile, id: 'replacement' };
-    const api = {
-      upload: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('Network'))
-        .mockResolvedValueOnce(replacement),
+  it('restores file names and byte sizes from the review and scopes the cache and route by ID', () => {
+    const review = {
+      reviewId: 37,
+      documents: [
+        { documentType: 'TERMS', filename: 'saved-terms.pdf', fileSize: 2048 },
+        { documentType: 'PRODUCT_GUIDE', filename: 'saved-guide.pdf', fileSize: 1048576 },
+      ],
     };
-    const request = {
-      api,
-      file: nextFile,
-      signal: new AbortController().signal,
-      onRegistered(document) {
-        draft = changeRegisteredDocument(draft, 'summary', document);
-      },
-    };
-
-    await expect(uploadAndRegister(request)).rejects.toThrow('Network');
-    expect(draft.documents).toEqual({ summary, policy });
-
-    await uploadAndRegister(request);
-    expect(draft.documents).toEqual({ summary: replacement, policy });
-    expect(api.upload.mock.calls.map(([request]) => request.file)).toEqual([nextFile, nextFile]);
-  });
-
-  it('does not commit an upload result after leaving or canceling the transfer', async () => {
-    const controller = new AbortController();
-    const onRegistered = vi.fn();
-    const upload = vi.fn(async () => {
-      controller.abort();
-      return summary;
+    expect(reviewDocuments(review)).toEqual({
+      policy: { name: 'saved-terms.pdf', size: 2048 },
+      summary: { name: 'saved-guide.pdf', size: 1048576 },
     });
+    expect(documentSize(2048)).toBe('2 KB');
+    expect(documentSize(1048576)).toBe('1 MB');
+    expect(documentReviewKey(37, false)).toEqual(documentReviewKey('37', false));
+    expect(documentReviewKey(37, true)).not.toEqual(documentReviewKey(37, false));
+    expect(documentReviewPath(review.reviewId, '?mock=1')).toBe('/documents/37?mock=1');
+  });
+
+  it('sends both files once, waits for the saved ID after 100%, and blocks resubmission', async () => {
+    const submission = createRegistrationSubmission();
+    const response = Promise.withResolvers();
+    const onProgress = vi.fn();
+    const createReview = vi.fn((request) => {
+      request.onProgress(100);
+      return response.promise;
+    });
+    const request = { files, createReview, onProgress };
+    const pending = submission.submit(request);
+
+    await vi.waitFor(() => expect(createReview).toHaveBeenCalledTimes(1));
+    expect(onProgress).toHaveBeenCalledWith(100);
+    expect(submission.isPending()).toBe(true);
+    await expect(submission.submit(request)).resolves.toBeNull();
+    response.resolve({ reviewId: 125 });
+    await expect(pending).resolves.toEqual({ reviewId: 125 });
+    await expect(submission.submit(request)).resolves.toBeNull();
+    expect(createReview).toHaveBeenCalledExactlyOnceWith({
+      files,
+      signal: expect.any(AbortSignal),
+      onProgress,
+    });
+  });
+
+  it('allows manual retry for confirmed file rejection and locks unconfirmed registration', async () => {
+    const storage = new Map();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (key) => storage.get(key),
+      setItem: (key, value) => storage.set(key, value),
+      removeItem: (key) => storage.delete(key),
+    });
+    const submission = createRegistrationSubmission('response-loss-test');
+    const createReview = vi
+      .fn()
+      .mockRejectedValueOnce({ status: 413, code: 'FILE_TOO_LARGE' })
+      .mockRejectedValueOnce({ status: null, code: 'ERR_NETWORK' });
+    const request = { files, createReview, onProgress: vi.fn() };
+
+    await expect(submission.submit(request)).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
+    await expect(submission.submit(request)).rejects.toMatchObject({ code: 'ERR_NETWORK' });
+    await expect(submission.submit(request)).rejects.toMatchObject({
+      code: 'REGISTRATION_UNCONFIRMED',
+    });
+    vi.resetModules();
+    const reloaded = await import('./documentRegistrationState');
+    const reopened = reloaded.createRegistrationSubmission('response-loss-test');
+    await expect(reopened.submit(request)).rejects.toMatchObject({
+      code: 'REGISTRATION_UNCONFIRMED',
+    });
+    expect(createReview).toHaveBeenCalledTimes(2);
+    expect(storage.size).toBe(1);
+    expect([...storage.keys()][0]).not.toContain('terms.pdf');
+    createReview.mockResolvedValueOnce({ reviewId: 501 });
     await expect(
-      uploadAndRegister({ api: { upload }, onRegistered, signal: controller.signal }),
-    ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(onRegistered).not.toHaveBeenCalled();
+      reopened.submit({
+        ...request,
+        files: { ...files, summary: makePdf('different.pdf') },
+      }),
+    ).resolves.toEqual({ reviewId: 501 });
+    expect(storage.size).toBe(1);
   });
 
-  it('keeps registered files scoped to each review, including mock and real work', () => {
-    const cache = new QueryClient();
-    const first = documentDraftKey('review-1', true);
-    cache.setQueryData(first, completeDraft());
-    expect(cache.getQueryData(documentDraftKey('review-2', true))).toBeUndefined();
-    expect(cache.getQueryData(documentDraftKey('review-1', false))).toBeUndefined();
+  it.each(['FILE_TOO_LARGE', 'INVALID_FILE_TYPE', 'REQUIRED_DOCUMENT_MISSING'])(
+    'shows a file error for %s',
+    (code) =>
+      expect(registrationFailure({ code })).toEqual({
+        uncertain: false,
+        message: expect.any(String),
+      }),
+  );
 
-    cache.setQueryData(first, (draft) => changeRegisteredDocument(draft, 'summary', null));
-    expect(cache.getQueryData(first).documents).toEqual({ policy });
-    cache.clear();
-  });
-
-  it('enables analysis only for two registered required files with no pending or completed run', () => {
-    const ready = completeDraft();
-    expect(canStartAnalysis(createDocumentDraft(), false)).toBe(false);
-    expect(canStartAnalysis(changeRegisteredDocument(ready, 'summary', null), false)).toBe(false);
-    expect(canStartAnalysis(ready, true)).toBe(false);
-    expect(canStartAnalysis(ready, false)).toBe(true);
-    expect(canStartAnalysis({ ...ready, analysis: { id: 'run' } }, false)).toBe(false);
-  });
-
-  it('reuses a saved batch and operation ID after only analysis fails', async () => {
-    let draft = completeDraft();
-    const storedBatch = { id: 'saved-batch' };
-    const analysis = { id: 'analysis-run' };
-    const api = {
-      save: vi.fn().mockResolvedValue(storedBatch),
-      startAnalysis: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('Network'))
-        .mockResolvedValueOnce(analysis),
-    };
-    const run = () =>
-      saveAndStartAnalysis({
-        api,
-        reviewId: 'review-1',
-        draft,
-        signal: new AbortController().signal,
-        onSaved: (saved) => {
-          draft = { ...draft, saved };
-        },
-        onAnalyzing: vi.fn(),
-      });
-
-    await expect(run()).rejects.toThrow('Network');
-    expect(draft.documents).toEqual({ summary, policy });
-    await expect(run()).resolves.toEqual(analysis);
-    expect(api.save).toHaveBeenCalledTimes(1);
-    expect(api.startAnalysis).toHaveBeenCalledTimes(2);
-    const [first, second] = api.startAnalysis.mock.calls.map(([request]) => request);
-    expect(first.operationId).toBe(second.operationId);
-    expect(second.saved).toEqual(storedBatch);
-  });
-
-  it('distinguishes invalid PDFs, encrypted PDFs, and upload failures at the UI adapter boundary', () => {
-    expect(uploadErrorKind({ code: 'DOCUMENT_UNREADABLE' })).toBe('unreadable');
-    expect(uploadErrorKind({ code: 'DOCUMENT_ENCRYPTED' })).toBe('encrypted');
-    expect(uploadErrorKind(new Error('Network'))).toBe('upload');
+  it('aborts pending work on exit and ignores a late success', async () => {
+    const submission = createRegistrationSubmission('aborted-registration');
+    const response = Promise.withResolvers();
+    const createReview = vi.fn(() => response.promise);
+    const pending = submission.submit({ files, createReview, onProgress: vi.fn() });
+    await vi.waitFor(() => expect(createReview).toHaveBeenCalledTimes(1));
+    submission.abort();
+    expect(createReview.mock.calls[0][0].signal.aborted).toBe(true);
+    response.resolve({ reviewId: 125 });
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

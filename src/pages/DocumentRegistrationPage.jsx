@@ -7,7 +7,7 @@ import DocumentUploadCard from '@/components/documents/DocumentUploadCard';
 import ReviewSteps from '@/components/layout/ReviewSteps';
 import ReviewWorkspaceLayout from '@/components/layout/ReviewWorkspaceLayout';
 import { useDocumentRegistration } from '@/hooks/useDocumentRegistration';
-import { fileErrors } from './documentRegistrationState';
+import { documentReviewPath, fileErrors, hasRequiredDocuments } from './documentRegistrationState';
 
 const steps = ['02 검수 홈', '03 문서 등록', '04 분석 진행'];
 
@@ -21,7 +21,7 @@ const fields = [
   {
     kind: 'policy',
     title: '약관',
-    description: '보험약관·특약(선택) PDF를 여기에 놓으세요.',
+    description: '보험약관 PDF를 여기에 놓으세요.',
     illustration: policyIllustration,
   },
 ];
@@ -70,10 +70,10 @@ function useConfirmLeaving(isBusy, hasPendingWork) {
   }, [isBusy]);
 }
 
-function AnalysisProgressDialog({ stage }) {
+function UploadProgressDialog({ progress }) {
   const dialog = useRef(null);
   const titleId = useId();
-  const isSaving = stage === 'saving';
+  const waitingForSave = progress === 100;
 
   useEffect(() => {
     const element = dialog.current;
@@ -93,20 +93,24 @@ function AnalysisProgressDialog({ stage }) {
         aria-live="polite"
         className="text-[length:calc(20*var(--review-pixel))] leading-[calc(28*var(--review-pixel))] font-medium"
       >
-        {isSaving ? '첨부 파일을 저장하고 있어요' : '분석을 시작하고 있어요.'}
+        {waitingForSave ? '서버의 등록 완료를 기다리고 있어요.' : '첨부 파일을 업로드하고 있어요.'}
       </h2>
-      {isSaving && (
-        <p className="mt-[calc(11*var(--review-pixel))] text-[length:calc(15*var(--review-pixel))] text-[#64748b]">
-          저장이 끝나면 분석을 시작해요.
-        </p>
+      {progress === null ? (
+        <div
+          role="progressbar"
+          aria-label="첨부 파일 등록 중"
+          className="mt-5 size-5 rounded-full border-2 border-[#e2e8f0] border-t-[#0067ac] motion-safe:animate-spin"
+        />
+      ) : (
+        <div
+          role="progressbar"
+          aria-label="첨부 파일 전송률"
+          aria-valuenow={progress}
+          className="mt-[calc(29*var(--review-pixel))] h-[calc(4*var(--review-pixel))] overflow-hidden rounded-full bg-[#e2e8f0]"
+        >
+          <div className="h-full rounded-full bg-[#0067ac]" style={{ width: progress + '%' }} />
+        </div>
       )}
-      <div
-        role="progressbar"
-        aria-label={isSaving ? '첨부 파일 저장 진행 중' : '분석 시작 요청 진행 중'}
-        className="mt-[calc(29*var(--review-pixel))] h-[calc(4*var(--review-pixel))] overflow-hidden rounded-full bg-[#e2e8f0]"
-      >
-        <div className="h-full w-2/5 rounded-full bg-[#0067ac]" />
-      </div>
     </dialog>
   );
 }
@@ -141,21 +145,50 @@ function UploadAlert({ id, error, onRetry, disabled, title }) {
   );
 }
 
-function DocumentRegistration({ reviewId, mock, scenario, homePath, reportPath, getAnalysisPath }) {
+function DocumentRegistration({
+  reviewId,
+  mock,
+  scenario,
+  search,
+  homePath,
+  reportPath,
+  getAnalysisPath,
+}) {
   const navigate = useNavigate();
   const registration = useDocumentRegistration({ reviewId, mock, scenario });
-  const { draft, transfers, uploading, analysisStage, analysisError, canAnalyze } = registration;
-  const busy = uploading || Boolean(analysisStage);
-  useConfirmLeaving(busy, registration.hasPendingWork);
+  const { detail, documents, errors, failure, uploading, locked, canRegister } = registration;
+  useConfirmLeaving(uploading, registration.hasPendingWork);
+  const restored = Boolean(reviewId);
+  const analysisPath =
+    restored &&
+    !detail.isError &&
+    detail.data?.currentStep === 'DOC_UPLOAD' &&
+    hasRequiredDocuments(documents)
+      ? getAnalysisPath?.({ reviewId: detail.data.reviewId })
+      : null;
+  const canProceed = restored ? Boolean(analysisPath) : canRegister;
 
   async function beginAnalysis() {
-    const result = await registration.start();
-    if (result && getAnalysisPath) {
-      navigate(getAnalysisPath({ reviewId, analysisId: result.id }));
+    if (restored) {
+      if (analysisPath) navigate(analysisPath);
+      return;
     }
+    const result = await registration.register();
+    if (!result) return;
+    const destination = getAnalysisPath?.({ reviewId: result.reviewId });
+    navigate(destination || documentReviewPath(result.reviewId, search), { replace: true });
   }
 
-  const hasErrors = fields.some(({ kind }) => transfers[kind]?.error);
+  const hasErrors = fields.some(({ kind }) => errors[kind]);
+  const statusText = restored
+    ? detail.data
+      ? '등록된 검수의 문서 정보를 표시하고 있어요.'
+      : detail.isPending
+        ? '등록된 문서를 불러오고 있어요.'
+        : ''
+    : failure?.uncertain
+      ? ''
+      : analysisHint(documents, uploading);
 
   return (
     <ReviewWorkspaceLayout homePath={homePath} reportPath={reportPath}>
@@ -174,22 +207,31 @@ function DocumentRegistration({ reviewId, mock, scenario, homePath, reportPath, 
       </div>
 
       <div className="mt-[calc(26*var(--review-pixel))]">
-        {(hasErrors || analysisError) && (
+        {(hasErrors || failure || (restored && detail.isError)) && (
           <div className="mb-[calc(16*var(--review-pixel))] grid gap-[calc(8*var(--review-pixel))]">
             {fields.map(({ kind, title }) => {
-              const error = transfers[kind]?.error;
+              const error = errors[kind];
               return error ? (
                 <UploadAlert
                   key={kind}
                   id={`${kind}-upload-error`}
                   error={fileErrors[error]}
                   title={title}
-                  disabled={Boolean(analysisStage)}
-                  onRetry={error === 'upload' ? () => registration.retry(kind) : undefined}
                 />
               ) : null;
             })}
-            {analysisError && <UploadAlert error={analysisError} />}
+            {failure && <UploadAlert error={failure.message} />}
+            {restored && detail.isError && (
+              <UploadAlert
+                error={
+                  detail.error?.status === 404
+                    ? '검수 정보를 찾을 수 없어요.'
+                    : '등록된 문서를 불러오지 못했어요.'
+                }
+                disabled={detail.isFetching}
+                onRetry={detail.error?.status === 404 ? undefined : () => void detail.refetch()}
+              />
+            )}
           </div>
         )}
 
@@ -198,10 +240,11 @@ function DocumentRegistration({ reviewId, mock, scenario, homePath, reportPath, 
             <DocumentUploadCard
               key={kind}
               {...field}
-              document={draft.documents[kind]}
-              transfer={transfers[kind]}
-              disabled={Boolean(analysisStage)}
-              errorId={transfers[kind]?.error ? `${kind}-upload-error` : undefined}
+              document={documents[kind]}
+              uploading={uploading}
+              saved={restored}
+              disabled={uploading || locked}
+              errorId={errors[kind] ? `${kind}-upload-error` : undefined}
               onAttach={(files) => registration.attach(kind, files)}
               onRemove={() => registration.remove(kind)}
             />
@@ -210,23 +253,25 @@ function DocumentRegistration({ reviewId, mock, scenario, homePath, reportPath, 
 
         <footer className="mt-[calc(27*var(--review-pixel))] flex flex-wrap items-center justify-between gap-4 border-t border-[#e2e8f0] pt-[calc(17*var(--review-pixel))]">
           <p
-            className={`text-[length:calc(14*var(--review-pixel))] ${canAnalyze ? 'text-[#0067ac]' : 'text-[#64748b]'}`}
+            className={`text-[length:calc(14*var(--review-pixel))] ${canProceed ? 'text-[#0067ac]' : 'text-[#64748b]'}`}
             aria-live="polite"
           >
-            {analysisHint(draft.documents, uploading)}
+            {statusText}
           </p>
           <button
             type="button"
-            disabled={!canAnalyze}
-            aria-busy={Boolean(analysisStage)}
+            disabled={!canProceed}
+            aria-busy={uploading}
             onClick={beginAnalysis}
             className="h-[calc(44*var(--review-pixel))] w-[calc(159*var(--review-pixel))] rounded-[calc(10*var(--review-pixel))] bg-[#0067ac] text-[length:calc(16*var(--review-pixel))] font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0067ac] disabled:bg-[#eaf5fc] disabled:text-[#64748b]"
           >
-            분석 시작
+            {restored && detail.data && !analysisPath && hasRequiredDocuments(documents)
+              ? '등록 완료'
+              : '분석 시작'}
           </button>
         </footer>
       </div>
-      {analysisStage && <AnalysisProgressDialog stage={analysisStage} />}
+      {uploading && <UploadProgressDialog progress={registration.progress} />}
     </ReviewWorkspaceLayout>
   );
 }
@@ -236,12 +281,14 @@ export default function DocumentRegistrationPage(props) {
   const [search] = useSearchParams();
   const mock = import.meta.env.DEV && search.get('mock') === '1';
   const scenario = mock ? search.get('scenario') : null;
+  const query = search.toString();
   return (
     <DocumentRegistration
       key={`${reviewId}:${mock}:${scenario}`}
       reviewId={reviewId}
       mock={mock}
       scenario={scenario}
+      search={query ? '?' + query : ''}
       {...props}
     />
   );

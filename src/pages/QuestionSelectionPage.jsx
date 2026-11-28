@@ -70,9 +70,11 @@ function QuestionSelection({
   const [editor, setEditor] = useState(null);
   const [limitError, setLimitError] = useState('');
   const selection = useQuestionSelection({ reviewId, mock, scenario, evidenceId });
-  const { list, questions, selected, selectionSaved, evidence, validating, saving, saveFailed } =
+  const { list, questions, selected, confirmation, evidence, validating, saving, verifying, busy } =
     selection;
-  const savedWithoutDestination = selectionSaved && !getApprovalPath;
+  const saved = confirmation?.status === 'saved';
+  const unconfirmed = confirmation?.status === 'unconfirmed';
+  const savedWithoutDestination = saved && !getApprovalPath;
   const selectedIds = new Set(selected.map(({ id }) => id));
   const previous = analysisPath ? (
     <Link to={analysisPath} className={previousClass}>
@@ -94,10 +96,20 @@ function QuestionSelection({
   }
 
   async function confirm() {
-    if (await selection.confirm()) {
-      if (getApprovalPath) navigate(getApprovalPath({ reviewId }));
-    }
+    const result = await selection.confirm();
+    const destination = result && getApprovalPath?.({ reviewId: result.reviewId });
+    if (destination) navigate(destination);
   }
+
+  const nextLabel = saving
+    ? 'AI 기준답안 생성 중…'
+    : verifying
+      ? '검수 상태 확인 중…'
+      : unconfirmed
+        ? '검수 상태 확인'
+        : savedWithoutDestination
+          ? '저장 완료'
+          : '검증 문항 승인으로';
 
   return (
     <ReviewWorkspaceLayout
@@ -123,10 +135,11 @@ function QuestionSelection({
         <div className="mt-[calc(26*var(--q))] grid gap-[calc(20*var(--q))] lg:grid-cols-[minmax(0,564fr)_minmax(0,396fr)]">
           <QuestionList
             list={list}
+            ready={selection.ready}
             questions={questions}
             selectedIds={selectedIds}
             evidenceId={evidenceId}
-            disabled={saving}
+            disabled={busy || selection.locked}
             onAdd={addQuestion}
             onToggle={(id) => setLimitError(selection.toggle(id) ? '' : selectionLimitMessage)}
             onEvidence={(id) => setEvidenceId((current) => (current === id ? null : id))}
@@ -135,7 +148,7 @@ function QuestionSelection({
               setEditor({ question });
             }}
             onRemove={(id) => {
-              selection.remove(id);
+              void selection.remove(id);
               setLimitError('');
             }}
           />
@@ -145,7 +158,7 @@ function QuestionSelection({
           />
         </div>
         <footer
-          aria-busy={saving}
+          aria-busy={saving || verifying}
           className="mt-[calc(24*var(--q))] flex flex-wrap items-start justify-between gap-[calc(12*var(--q))]"
         >
           <div className="min-w-0 flex-1">
@@ -155,30 +168,39 @@ function QuestionSelection({
                 {limitError}
               </p>
             )}
-            {saveFailed && (
+            {confirmation?.status === 'retry' && (
               <p role="alert" className="mt-1 text-[length:calc(14*var(--q))] text-red-700">
                 검증 질문을 저장하지 못했어요. 다시 시도해 주세요.
+              </p>
+            )}
+            {unconfirmed && (
+              <p role="alert" className="mt-1 text-[length:calc(14*var(--q))] text-red-700">
+                이전 확정의 처리 상태를 확인하지 못했어요. 검수 상태를 확인해 주세요.
+              </p>
+            )}
+            {selection.removeFailed && (
+              <p role="alert" className="mt-1 text-[length:calc(14*var(--q))] text-red-700">
+                질문을 삭제하지 못했어요. 다시 시도해 주세요.
               </p>
             )}
           </div>
           <button
             type="button"
-            disabled={!selected.length || saving || savedWithoutDestination}
+            disabled={
+              busy || savedWithoutDestination || (!unconfirmed && !saved && !selected.length)
+            }
             onClick={confirm}
             className="h-[calc(37*var(--q))] w-[calc(188*var(--q))] shrink-0 rounded-[calc(10*var(--q))] bg-[#0067ac] text-[length:calc(14*var(--q))] font-semibold text-white enabled:shadow-[0_2px_4px_#172b4d17] disabled:bg-[#e2e8f0] disabled:text-[#64748b] aria-busy:bg-[#0067ac] aria-busy:text-white"
-            aria-busy={saving}
+            aria-busy={saving || verifying}
           >
-            {saving ? '저장 중...' : savedWithoutDestination ? '저장 완료' : '검증 문항 승인으로'}
+            {nextLabel}
           </button>
         </footer>
         {editor && (
           <QuestionEditor
             question={editor.question}
             validating={validating}
-            onClose={() => {
-              selection.cancelValidation();
-              setEditor(null);
-            }}
+            onClose={() => setEditor(null)}
             onSubmit={selection.submitCustom}
           />
         )}

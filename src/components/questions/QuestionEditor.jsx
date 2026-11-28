@@ -42,7 +42,7 @@ export default function QuestionEditor({ question, validating, onClose, onSubmit
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        if (!validating) onClose();
       }}
       className="m-auto max-h-[calc(100dvh-2rem)] w-[calc(560*var(--q))] max-w-[calc(100%-2rem)] overflow-auto rounded-[calc(16*var(--q))] border border-[#e2e8f0] bg-white p-[calc(23*var(--q))] text-[#172b4d] shadow-[0_2px_8px_#172b4d14] backdrop:bg-[#172b4d]/20"
     >
@@ -86,6 +86,7 @@ export default function QuestionEditor({ question, validating, onClose, onSubmit
         <div className="mt-[calc(6*var(--q))] flex justify-end gap-[calc(8*var(--q))] text-[length:calc(14*var(--q))] font-semibold">
           <button
             type="button"
+            disabled={validating}
             onClick={onClose}
             className="h-[calc(40*var(--q))] w-[calc(85*var(--q))] rounded-[calc(10*var(--q))] border border-[#dce5ef] text-[#64748b]"
           >
@@ -96,7 +97,7 @@ export default function QuestionEditor({ question, validating, onClose, onSubmit
             disabled={Boolean(inputError) || validating}
             className="h-[calc(40*var(--q))] w-[calc(156*var(--q))] rounded-[calc(10*var(--q))] bg-[#0067ac] text-white shadow-[0_2px_4px_#172b4d17] disabled:text-[#dbe7f1]"
           >
-            {validating ? '확인 중...' : question ? '수정 저장' : '추가하고 선택'}
+            {validating ? '저장 중...' : question ? '수정 저장' : '추가하고 선택'}
           </button>
         </div>
       </form>

@@ -1,6 +1,6 @@
-import client from './client';
+import { healthClient } from './client';
 
 export async function getHealth() {
-  const { data } = await client.get('/health');
+  const { data } = await healthClient.get('/health');
   return data;
 }
