@@ -1,14 +1,65 @@
-import { MutationObserver, onlineManager, QueryClient } from '@tanstack/react-query';
+import { MutationObserver, onlineManager, QueryClient, QueryObserver } from '@tanstack/react-query';
 import { createMemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { login } from '@/api/auth';
-import { createLoginSubmission, loginMutationOptions } from './loginMutation';
+import { issueCsrfToken, login } from '@/api/auth';
+import {
+  createLoginSubmission,
+  csrfUnavailable,
+  loginCsrfQueryOptions,
+  loginMutationOptions,
+} from './loginMutation';
 
-vi.mock('@/api/auth', () => ({ login: vi.fn() }));
+vi.mock('@/api/auth', () => ({ issueCsrfToken: vi.fn(), login: vi.fn() }));
 
 // 테스트 전용 입력과 경로. 실제 계정이나 서버 응답을 사용하지 않는다.
 const credentials = { employeeNumber: '32403332', password: 'Example9!' };
 const reviewHomePath = '/test-review-home';
+
+describe('login CSRF preparation', () => {
+  let client;
+  let query;
+  let unsubscribe;
+
+  beforeEach(() => {
+    vi.mocked(issueCsrfToken).mockReset();
+    client = new QueryClient();
+    query = new QueryObserver(client, loginCsrfQueryOptions);
+  });
+
+  afterEach(() => {
+    unsubscribe?.();
+    client.clear();
+  });
+
+  it('shares the pending request across a StrictMode unsubscribe and resubscribe', async () => {
+    const issuance = Promise.withResolvers();
+    vi.mocked(issueCsrfToken).mockReturnValueOnce(issuance.promise);
+    query.subscribe(() => {})();
+    unsubscribe = query.subscribe(() => {});
+    expect(query.getCurrentResult().isFetching).toBe(true);
+    expect(issueCsrfToken).toHaveBeenCalledTimes(1);
+
+    issuance.resolve();
+    await vi.waitFor(() => expect(query.getCurrentResult().isSuccess).toBe(true));
+    expect(query.getCurrentResult().data).toBe(true);
+  });
+
+  it('reports a failed issuance and shares one manual retry', async () => {
+    vi.mocked(issueCsrfToken)
+      .mockRejectedValueOnce(new Error('Mock transport details'))
+      .mockResolvedValueOnce(undefined);
+    unsubscribe = query.subscribe(() => {});
+    await vi.waitFor(() => expect(query.getCurrentResult().error?.message).toBe(csrfUnavailable));
+    expect(issueCsrfToken).toHaveBeenCalledTimes(1);
+
+    await Promise.all([
+      query.refetch({ cancelRefetch: false }),
+      query.refetch({ cancelRefetch: false }),
+    ]);
+    expect(query.getCurrentResult().isSuccess).toBe(true);
+    expect(issueCsrfToken).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('login submission', () => {
   let queryClient;
@@ -84,9 +135,11 @@ describe('login submission', () => {
 
   it.each([
     [
-      Object.assign(new Error('Mock authentication failure'), { code: 'INVALID_CREDENTIALS' }),
+      Object.assign(new Error('Mock authentication failure'), { code: 'LOGIN_FAILED' }),
       '사번 또는 비밀번호가 올바르지 않습니다.',
     ],
+    [{ code: 'INVALID_INPUT' }, '사번과 비밀번호의 입력 형식을 확인해 주세요.'],
+    [{ code: 'INVALID_CSRF_TOKEN' }, '로그인 연결을 다시 준비해 주세요.'],
     [new Error('Mock network failure'), '로그인하지 못했어요. 잠시 후 다시 시도해 주세요.'],
   ])('shows the error and allows a manual retry for %s', async (error, message) => {
     vi.mocked(login).mockRejectedValueOnce(error).mockResolvedValueOnce(undefined);

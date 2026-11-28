@@ -9,11 +9,7 @@ import QuestionSelectionPage from '@/pages/QuestionSelectionPage';
 export const router = createBrowserRouter([
   { path: '/', loader: () => replace('/login') },
   { path: '/login', element: <LoginPage /> },
-  {
-    path: '/documents',
-    loader: ({ request }) =>
-      replace(`/documents/${crypto.randomUUID()}${new URL(request.url).search}`),
-  },
+  { path: '/documents', element: <DocumentRegistrationPage /> },
   { path: '/documents/:reviewId', element: <DocumentRegistrationPage /> },
   { path: '/questions/:reviewId', element: <QuestionSelectionPage /> },
   {

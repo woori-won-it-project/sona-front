@@ -1,194 +1,214 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockQuestionSelectionApi } from '@/api/mocks/questionSelection';
 import {
+  canManageQuestion,
   checkQuestionText,
+  confirmQuestionSelection,
   getSelectedQuestions,
-  removeCustomQuestion,
-  saveCustomQuestion,
-  selectionSignature,
+  maxQuestionLength,
+  storedQuestionIds,
+  toEvidence,
+  toQuestion,
   toggleQuestionSelection,
+  verifyQuestionSelection,
 } from './questionSelectionState';
 
-describe('question selection', () => {
-  it('starts empty and allows deselection after refusing an eleventh question', () => {
-    const ids = Array.from({ length: 10 }, (_, index) => 'question-' + index);
-    const selected = ids.reduce(toggleQuestionSelection, []);
-    expect(selected).toEqual(ids);
-    expect(toggleQuestionSelection(selected, 'overflow')).toBe(selected);
-    expect(toggleQuestionSelection(selected, ids[0])).toEqual(ids.slice(1));
-  });
+const signal = new AbortController().signal;
+const selection = { reviewId: '3', questionIds: [1, 5], signal };
 
-  it('adds and selects a custom question, preserves selection when editing, and removes both by ID', () => {
-    const draft = { customQuestions: [], selectedIds: ['existing'] };
-    const question = { id: 'custom', text: '보장이 되나요?', type: 'custom' };
-    const next = saveCustomQuestion(draft, question);
-    expect(next.selectedIds).toEqual(['existing', 'custom']);
-    const edited = saveCustomQuestion(next, { ...question, text: '입원하면 보장이 되나요?' });
-    expect(edited.selectedIds).toBe(next.selectedIds);
-    expect(getSelectedQuestions(edited.customQuestions, edited.selectedIds)).toEqual([
-      { ...question, text: '입원하면 보장이 되나요?' },
-    ]);
-    const unselected = { ...edited, selectedIds: ['existing'] };
-    expect(saveCustomQuestion(unselected, question).selectedIds).toBe(unselected.selectedIds);
-    expect(removeCustomQuestion(edited, 'custom')).toEqual(draft);
-  });
-
-  it('does not append a custom question if the selection is full', () => {
-    const draft = {
-      customQuestions: [],
-      selectedIds: Array.from({ length: 10 }, (_, index) => index),
-    };
-    expect(saveCustomQuestion(draft, { id: 'custom', text: '질문' })).toBe(draft);
-  });
-
-  it('trims outer spaces and counts inner spaces and Unicode characters', () => {
-    expect(checkQuestionText('   ')).toBe('empty');
-    expect(checkQuestionText(' ' + '가'.repeat(150) + ' ')).toBeNull();
-    expect(checkQuestionText('가 '.repeat(75) + '🙂')).toBe('length');
-    expect(checkQuestionText('🙂'.repeat(150))).toBeNull();
-  });
-
-  it('detects changes to the saved selection or custom question text', () => {
-    const recommended = { id: 'r1', type: 'case', text: '입원 치료도 보장되나요?' };
-    const custom = { id: 'c1', type: 'custom', text: '통원 치료도 보장되나요?' };
-    const saved = selectionSignature([recommended], [custom]);
-    expect(selectionSignature([{ ...recommended }], [{ ...custom }])).toBe(saved);
-    expect(selectionSignature([recommended, custom], [custom])).not.toBe(saved);
-    expect(selectionSignature([recommended], [{ ...custom, text: '다른 질문인가요?' }])).not.toBe(
-      saved,
-    );
-  });
+it('restores only saved selections and leaves checkbox changes outside the question list', () => {
+  const questions = [
+    { questionId: 1, sourceType: 'CASE_BASED', questionText: 'one', status: 'DRAFT' },
+    { questionId: 5, sourceType: 'MANUAL', questionText: 'five', status: 'APPROVED' },
+    { questionId: 8, sourceType: 'MISUNDERSTANDING', questionText: 'eight', status: 'SELECTED' },
+  ].map(toQuestion);
+  const saved = storedQuestionIds(questions);
+  expect(saved).toEqual([5, 8]);
+  const local = toggleQuestionSelection(toggleQuestionSelection(saved, 5), 1);
+  expect(getSelectedQuestions(questions, local).map(({ text }) => text)).toEqual(['eight', 'one']);
+  expect(storedQuestionIds(questions)).toEqual([5, 8]);
 });
 
-async function complete(promise) {
-  const result = promise.then(
-    (value) => ({ value }),
-    (error) => ({ error }),
-  );
-  await vi.runAllTimersAsync();
-  return result;
-}
+it('keeps the 10-question and 150-character UI limits', () => {
+  const ids = Array.from({ length: 10 }, (_, index) => index);
+  expect(toggleQuestionSelection(ids, 10)).toBe(ids);
+  expect(toggleQuestionSelection(ids, 9)).toEqual(ids.slice(0, 9));
+  expect(checkQuestionText('  ')).toBe('empty');
+  expect(checkQuestionText('  ' + '한'.repeat(maxQuestionLength) + '  ')).toBeNull();
+  expect(checkQuestionText('가 '.repeat(76))).toBe('length');
+});
 
-describe('development question fixtures', () => {
-  it('cancels pending validation and allows a new validation immediately', async () => {
-    vi.useFakeTimers();
-    try {
-      const fixture = createMockQuestionSelectionApi();
-      const controller = new AbortController();
-      const request = { text: '통원 치료도 보장되나요?', questions: [] };
-      const canceled = fixture.validate({ ...request, signal: controller.signal });
-      controller.abort();
-      expect((await complete(canceled)).error.name).toBe('AbortError');
-      const signal = new AbortController().signal;
-      expect((await complete(fixture.validate({ ...request, signal }))).value).toEqual({
-        reason: null,
-      });
-    } finally {
-      vi.useRealTimers();
-    }
+it.each([
+  ['MANUAL', 'DRAFT', true],
+  ['MANUAL', 'SELECTED', true],
+  ['MANUAL', 'APPROVED', false],
+  ['CASE_BASED', 'DRAFT', false],
+  ['MISUNDERSTANDING', 'SELECTED', false],
+])('allows management for %s/%s only when permitted', (type, status, allowed) => {
+  expect(canManageQuestion({ type, status })).toBe(allowed);
+});
+
+it('uses document and case evidence with no placeholder output for absent source fields', () => {
+  expect(
+    toEvidence({
+      generationReason: 'Reason',
+      evidences: [
+        {
+          evidenceId: 1,
+          filename: 'terms.pdf',
+          sourcePage: 3,
+          evidenceText: 'Excerpt',
+          clauseTitle: null,
+        },
+        {
+          evidenceId: 2,
+          disputeCaseId: 9,
+          caseTitle: null,
+          evidenceText: 'Example',
+          sourceUrl: 'https://example.com/source',
+        },
+        { evidenceId: 3, sourceUrl: null },
+      ],
+    }),
+  ).toMatchObject({
+    reason: 'Reason',
+    sections: [
+      { label: '관련 문서', entries: [{ id: 1, title: 'terms.pdf · PDF p.3', text: 'Excerpt' }] },
+      { label: '관련 분쟁사례', entries: [{ id: 2, title: '', text: 'Example' }] },
+    ],
+    references: ['https://example.com/source'],
+  });
+  expect(toEvidence({ generationReason: null, evidences: [] })).toBeNull();
+});
+
+it('confirms the selected IDs once and hands off the server review ID', async () => {
+  const api = {
+    confirm: vi.fn().mockResolvedValue({ reviewId: 3, currentStep: 'ANSWER_APPROVE' }),
+    getReview: vi.fn(),
+  };
+  await expect(confirmQuestionSelection({ api, ...selection })).resolves.toEqual({
+    status: 'saved',
+    reviewId: 3,
+  });
+  expect(api.confirm).toHaveBeenCalledExactlyOnceWith(selection);
+  expect(api.getReview).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['ANSWER_APPROVE', { status: 'saved', reviewId: 3 }],
+  ['QUESTION_SELECT', { status: 'unconfirmed' }],
+  ['ANALYZING', { status: 'unconfirmed' }],
+])(
+  'checks the actual %s step after a lost response without repeating the write',
+  async (currentStep, expected) => {
+    const api = {
+      confirm: vi.fn().mockRejectedValue({ code: 'ERR_NETWORK' }),
+      getReview: vi.fn().mockResolvedValue({ reviewId: 3, currentStep }),
+    };
+    await expect(
+      confirmQuestionSelection({ api, ...selection, scope: currentStep }),
+    ).resolves.toEqual(expected);
+    expect(api.getReview).toHaveBeenCalledExactlyOnceWith({ reviewId: '3', signal });
+    expect(api.confirm).toHaveBeenCalledTimes(1);
+  },
+);
+
+it('keeps an unresolved save locked and rechecks with a read only', async () => {
+  const api = {
+    confirm: vi.fn().mockRejectedValue({ status: 500 }),
+    getReview: vi
+      .fn()
+      .mockRejectedValueOnce({ status: 500 })
+      .mockResolvedValueOnce({ reviewId: 3, currentStep: 'ANSWER_APPROVE' }),
+  };
+  await expect(confirmQuestionSelection({ api, ...selection })).resolves.toEqual({
+    status: 'unconfirmed',
+  });
+  await expect(verifyQuestionSelection({ api, ...selection })).resolves.toEqual({
+    status: 'saved',
+    reviewId: 3,
+  });
+  expect(api.confirm).toHaveBeenCalledTimes(1);
+  expect(api.getReview).toHaveBeenCalledTimes(2);
+});
+
+it('keeps a processing conflict locked after reload and unlocks only after approval is confirmed', async () => {
+  const storage = new Map();
+  vi.stubGlobal('sessionStorage', {
+    getItem: (key) => storage.get(key),
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key),
+  });
+  try {
+    const api = {
+      confirm: vi.fn().mockRejectedValue({ status: 409, code: 'REVIEW_PROCESSING' }),
+      getReview: vi.fn().mockResolvedValue({ reviewId: 3, currentStep: 'QUESTION_SELECT' }),
+    };
+    const params = { api, ...selection, scope: 'processing-test' };
+    await expect(confirmQuestionSelection(params)).resolves.toEqual({ status: 'unconfirmed' });
+    expect([...storage.values()]).toEqual(['1']);
+    vi.resetModules();
+    const reloaded = await import('./questionSelectionState');
+    expect(reloaded.selectionAttempt(params.scope, params.reviewId).isPending()).toBe(true);
+    await expect(reloaded.verifyQuestionSelection(params)).resolves.toEqual({
+      status: 'unconfirmed',
+    });
+    await expect(reloaded.confirmQuestionSelection(params)).resolves.toEqual({
+      status: 'unconfirmed',
+    });
+    expect(api.confirm).toHaveBeenCalledTimes(1);
+    api.getReview.mockResolvedValueOnce({ reviewId: 3, currentStep: 'ANSWER_APPROVE' });
+    await expect(reloaded.verifyQuestionSelection(params)).resolves.toEqual({
+      status: 'saved',
+      reviewId: 3,
+    });
+    expect(storage.size).toBe(0);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+describe('question mock API', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  async function complete(operation) {
+    await vi.runAllTimersAsync();
+    return operation;
+  }
+
+  it('creates, edits and deletes persistent manual questions without altering another review', async () => {
+    const api = createMockQuestionSelectionApi();
+    const input = { reviewId: '101', signal };
+    const created = await complete(api.create({ ...input, questionText: 'New question?' }));
+    expect(created).toMatchObject({
+      questionId: expect.any(Number),
+      sourceType: 'MANUAL',
+      status: 'DRAFT',
+    });
+    const update = { ...input, questionId: created.questionId, questionText: 'Edited question?' };
+    const edited = await complete(api.update(update));
+    expect(edited).toEqual({ ...created, questionText: update.questionText });
+    expect(await complete(api.list(input))).toContainEqual(edited);
+    expect(await complete(api.list({ ...input, reviewId: '102' }))).not.toContainEqual(edited);
+    await complete(api.remove(update));
+    expect(await complete(api.list(input))).not.toContainEqual(edited);
   });
 
-  it('returns enough distinct synthetic evidence entries to exercise scrolling', async () => {
-    vi.useFakeTimers();
-    try {
-      const signal = new AbortController().signal;
-      const fixture = createMockQuestionSelectionApi('long-evidence');
-      const { value } = await complete(fixture.evidence({ questionId: 'mock-case-1', signal }));
-      const entries = value.sections[0].entries;
-      expect(entries).toHaveLength(8);
-      expect(new Set(entries.map(({ id }) => id)).size).toBe(entries.length);
-      expect(value.mock).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('returns an unselected review, supports a genuinely empty recommendation list, and keeps evidence synthetic', async () => {
-    vi.useFakeTimers();
-    try {
-      const signal = new AbortController().signal;
-      const fixture = createMockQuestionSelectionApi();
-      const { value } = await complete(fixture.list({ signal }));
-      expect(value.selectedIds).toEqual([]);
-      expect(value.questions.map(({ type }) => type)).toEqual(['case', 'predicted']);
-      expect(
-        (await complete(createMockQuestionSelectionApi('empty').list({ signal }))).value.questions,
-      ).toEqual([]);
-      const evidence = await complete(
-        fixture.evidence({ questionId: value.questions[0].id, signal }),
-      );
-      expect(evidence.value).toMatchObject({
-        mock: true,
-        basis: '약관 근거 기반',
-        references: ['보험약관 제11조 제1호, PDF p.32'],
-      });
-      expect(evidence.value.sections[0].label).toBe('관련 약관');
-      expect(evidence.value.reason).toContain('지급 조건');
-      expect(
-        (await complete(fixture.evidence({ questionId: 'unknown', signal }))).value,
-      ).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('simulates a remote validation failure, excludes the edited question, and permits retry', async () => {
-    vi.useFakeTimers();
-    try {
-      const fixture = createMockQuestionSelectionApi('validation-error');
-      const signal = new AbortController().signal;
-      const questions = [{ id: 'one', text: '보장이 되나요?' }];
-      const request = { signal, questions, questionId: 'one', text: questions[0].text };
-      expect((await complete(fixture.validate(request))).error).toBeInstanceOf(Error);
-      expect((await complete(fixture.validate(request))).value).toEqual({ reason: null });
-      expect((await complete(fixture.validate({ ...request, questionId: 'other' }))).value).toEqual(
-        { reason: 'duplicate' },
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('simulates the four AI rejection outcomes independently of the input', async () => {
-    vi.useFakeTimers();
-    try {
-      const signal = new AbortController().signal;
-      for (const [scenario, reason] of [
-        ['unrelated', 'unrelated'],
-        ['vague', 'vague'],
-        ['not-binary', 'notBinary'],
-        ['duplicate', 'duplicate'],
-      ]) {
-        const result = await complete(
-          createMockQuestionSelectionApi(scenario).validate({
-            signal,
-            questions: [],
-            text: '테스트',
-          }),
-        );
-        expect(result.value).toEqual({ reason });
-      }
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('allows retry after the first mock save fails and aborts pending work', async () => {
-    vi.useFakeTimers();
-    try {
-      const fixture = createMockQuestionSelectionApi('save-error');
-      const controller = new AbortController();
-      expect((await complete(fixture.save({ signal: controller.signal }))).error).toBeInstanceOf(
-        Error,
-      );
-      expect(await complete(fixture.save({ signal: controller.signal }))).toEqual({
-        value: undefined,
-      });
-      const pending = fixture.save({ signal: controller.signal });
-      controller.abort();
-      expect((await complete(pending)).error.name).toBe('AbortError');
-    } finally {
-      vi.useRealTimers();
-    }
+  it('returns approval state on reentry and prevents modification of approved questions', async () => {
+    const api = createMockQuestionSelectionApi('restored');
+    const input = { reviewId: '201', signal };
+    const initial = await complete(api.list(input));
+    expect(storedQuestionIds(initial.map(toQuestion))).toEqual([1, 3]);
+    const details = await complete(api.evidence({ ...input, questionId: 1 }));
+    expect(toEvidence(details).sections).toHaveLength(2);
+    const rejected = expect(api.remove({ ...input, questionId: 3 })).rejects.toMatchObject({
+      code: 'INVALID_QUESTION_STATUS',
+    });
+    await complete(rejected);
+    await complete(api.confirm({ ...input, questionIds: [2, 3] }));
+    const reopened = await complete(createMockQuestionSelectionApi('restored').list(input));
+    expect(storedQuestionIds(reopened.map(toQuestion))).toEqual([2, 3]);
+    expect(reopened.find(({ questionId }) => questionId === 3).status).toBe('APPROVED');
   });
 });

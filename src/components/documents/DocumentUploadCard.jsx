@@ -9,7 +9,8 @@ export default function DocumentUploadCard({
   description,
   illustration,
   document,
-  transfer,
+  uploading,
+  saved,
   disabled,
   errorId,
   onAttach,
@@ -18,10 +19,14 @@ export default function DocumentUploadCard({
   const headingId = useId();
   const picker = useRef(null);
   const [dragging, setDragging] = useState(false);
-  const uploading = Boolean(transfer?.file && !transfer.error);
   const locked = disabled || uploading;
-  const displayedFile = uploading ? transfer.file : document;
-  const status = uploading ? '업로드 중' : document ? '등록 완료' : '등록 필요';
+  const status = uploading
+    ? '업로드 중'
+    : document
+      ? saved
+        ? '등록 완료'
+        : '첨부 완료'
+      : '등록 필요';
 
   return (
     <section
@@ -52,7 +57,7 @@ export default function DocumentUploadCard({
           {title}
         </h2>
         <span
-          className={`grid h-[calc(28*var(--review-pixel))] w-[calc(94*var(--review-pixel))] shrink-0 place-items-center rounded-[calc(7*var(--review-pixel))] bg-[#e2e8f0] text-[length:calc(13*var(--review-pixel))] font-medium ${displayedFile ? 'text-[#008a37]' : 'text-[#64748b]'}`}
+          className={`grid h-[calc(28*var(--review-pixel))] w-[calc(94*var(--review-pixel))] shrink-0 place-items-center rounded-[calc(7*var(--review-pixel))] bg-[#e2e8f0] text-[length:calc(13*var(--review-pixel))] font-medium ${document ? 'text-[#008a37]' : 'text-[#64748b]'}`}
           role="status"
         >
           {status}
@@ -60,13 +65,13 @@ export default function DocumentUploadCard({
       </div>
       <div className="mt-[calc(24*var(--review-pixel))] flex min-h-[calc(142*var(--review-pixel))] items-center justify-between gap-1 px-[calc(24*var(--review-pixel))] pr-[calc(29*var(--review-pixel))]">
         <div className="min-w-0">
-          {displayedFile ? (
+          {document ? (
             <>
               <p className="text-[length:calc(17*var(--review-pixel))] leading-[calc(24*var(--review-pixel))] font-medium break-all">
-                {displayedFile.name}
+                {document.name}
               </p>
               <p className="mt-[calc(8*var(--review-pixel))] text-[length:calc(14*var(--review-pixel))] text-[#64748b]">
-                {documentSize(displayedFile.size)}
+                {documentSize(document.size)}
               </p>
             </>
           ) : (
@@ -83,24 +88,7 @@ export default function DocumentUploadCard({
           className="h-auto w-[calc(124*var(--review-pixel))] shrink-0"
         />
       </div>
-      {uploading ? (
-        <div className="mt-auto px-[calc(24*var(--review-pixel))] pb-[calc(48*var(--review-pixel))]">
-          <div
-            role="progressbar"
-            aria-label={`${title} 업로드 진행률`}
-            aria-valuenow={Math.round(transfer.progress)}
-            className="h-[calc(4*var(--review-pixel))] overflow-hidden rounded-full bg-[#e2e8f0]"
-          >
-            <div
-              className="h-full rounded-full bg-[#0067ac] transition-[width] duration-[50ms] ease-linear motion-reduce:transition-none"
-              style={{ width: `${transfer.progress}%` }}
-            />
-          </div>
-          <p className="mt-[calc(12*var(--review-pixel))] text-[length:calc(14*var(--review-pixel))] text-[#64748b]">
-            업로드 중
-          </p>
-        </div>
-      ) : (
+      {!saved && (
         <div className="mt-auto flex items-end justify-between gap-[calc(12*var(--review-pixel))] pt-[calc(8*var(--review-pixel))] pr-[calc(17*var(--review-pixel))] pb-[calc(24*var(--review-pixel))] pl-[calc(23*var(--review-pixel))]">
           <input
             ref={picker}
@@ -121,9 +109,9 @@ export default function DocumentUploadCard({
             disabled={locked}
             onClick={() => picker.current?.click()}
             className={primaryButton}
-            aria-label={`${title} ${document ? '다시 업로드' : '파일 선택'}`}
+            aria-label={`${title} ${document ? '파일 교체' : '파일 선택'}`}
           >
-            {document ? '다시 업로드' : '파일 선택'}
+            {document ? '파일 교체' : '파일 선택'}
           </button>
           {document && (
             <button

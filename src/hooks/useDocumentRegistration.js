@@ -1,42 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { documentRegistrationApi } from '@/api/documentRegistration';
 import {
-  canStartAnalysis,
-  changeRegisteredDocument,
-  createDocumentDraft,
-  documentDraftKey,
-  saveAndStartAnalysis,
-  uploadAndRegister,
-  uploadErrorKind,
+  createRegistrationSubmission,
+  documentReviewKey,
+  hasRequiredDocuments,
+  registrationFailure,
+  reviewDocuments,
   validateDocumentFiles,
 } from '@/pages/documentRegistrationState';
 
-const emptyTransfer = { file: null, progress: 0, error: null };
-const analysisErrorMessage = '분석을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.';
-
 export function useDocumentRegistration({ reviewId, mock, scenario }) {
   const queryClient = useQueryClient();
-  const queryKey = documentDraftKey(reviewId, mock);
-  const { data: draft } = useQuery({
-    queryKey,
-    queryFn: skipToken,
-    initialData: createDocumentDraft,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  });
-  const controllers = useRef(new Map());
   const mockApi = useRef(null);
-  const [transfers, setTransfers] = useState({});
-  const [analysisStage, setAnalysisStage] = useState(null);
-  const [analysisError, setAnalysisError] = useState('');
-
-  useEffect(
-    () => () => {
-      for (const controller of controllers.current.values()) controller.abort();
-    },
-    [controllers],
+  const [files, setFiles] = useState({});
+  const [fileErrors, setFileErrors] = useState({});
+  const [progress, setProgress] = useState(null);
+  const [failure, setFailure] = useState(null);
+  const [submission] = useState(() =>
+    createRegistrationSubmission(mock ? ['mock', scenario] : 'server'),
   );
+
+  useEffect(() => () => submission.abort(), [submission]);
 
   async function getApi() {
     if (import.meta.env.DEV && mock) {
@@ -48,124 +33,78 @@ export function useDocumentRegistration({ reviewId, mock, scenario }) {
     return documentRegistrationApi;
   }
 
-  const { mutateAsync: transfer, reset: resetTransfer } = useMutation({
-    mutationFn: async (request) => uploadAndRegister({ ...request, api: await getApi() }),
-    networkMode: 'always',
-    gcTime: 0,
+  const detail = useQuery({
+    queryKey: documentReviewKey(reviewId, mock),
+    enabled: Boolean(reviewId),
+    queryFn: async ({ signal }) => (await getApi()).getReview({ reviewId, signal }),
     retry: false,
   });
-  const { mutateAsync: analyze, reset: resetAnalysis } = useMutation({
-    mutationFn: async (request) => saveAndStartAnalysis({ ...request, api: await getApi() }),
-    networkMode: 'always',
+  const mutation = useMutation({
+    mutationFn: async (request) => {
+      const api = await getApi();
+      request.signal.throwIfAborted();
+      return api.createReview(request);
+    },
     gcTime: 0,
     retry: false,
+    networkMode: 'always',
   });
 
-  function setTransfer(kind, value) {
-    setTransfers((current) => ({ ...current, [kind]: value }));
-  }
+  const locked = Boolean(reviewId || mutation.isSuccess);
 
-  async function attach(kind, files) {
-    if (!files.length || controllers.current.has(kind) || controllers.current.has('analysis'))
-      return;
-    const current = queryClient.getQueryData(queryKey);
-    const error = validateDocumentFiles(files, current.documents[kind]);
-    if (error) {
-      setTransfer(kind, { ...emptyTransfer, error });
-      return;
-    }
-    const [file] = files;
-    const controller = new AbortController();
-    controllers.current.set(kind, controller);
-    setTransfer(kind, { file, progress: 0, error: null });
-    setAnalysisError('');
-
-    try {
-      await transfer({
-        reviewId,
-        kind,
-        file,
-        signal: controller.signal,
-        onProgress: (progress) => {
-          if (!controller.signal.aborted) setTransfer(kind, { file, progress, error: null });
-        },
-        onRegistered: (document) =>
-          queryClient.setQueryData(queryKey, (current) =>
-            changeRegisteredDocument(current, kind, document),
-          ),
-      });
-      if (!controller.signal.aborted) setTransfer(kind, emptyTransfer);
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        const kindOfError = uploadErrorKind(error);
-        setTransfer(kind, {
-          ...emptyTransfer,
-          error: kindOfError,
-          file: kindOfError === 'upload' ? file : null,
-        });
-      }
-    } finally {
-      controllers.current.delete(kind);
-      resetTransfer();
-    }
+  function attach(kind, selected) {
+    if (!selected.length || locked || submission.isPending()) return;
+    const error = validateDocumentFiles(selected, files[kind]);
+    setFileErrors((current) => ({ ...current, [kind]: error }));
+    if (error) return;
+    setFiles((current) => ({ ...current, [kind]: selected[0] }));
+    setFailure(null);
   }
 
   function remove(kind) {
-    if (controllers.current.has(kind) || controllers.current.has('analysis')) return;
-    queryClient.setQueryData(queryKey, (current) => changeRegisteredDocument(current, kind, null));
-    setTransfer(kind, emptyTransfer);
-    setAnalysisError('');
+    if (locked || submission.isPending()) return;
+    setFiles((current) => ({ ...current, [kind]: undefined }));
+    setFileErrors((current) => ({ ...current, [kind]: null }));
+    setFailure(null);
   }
 
-  async function start() {
-    const current = queryClient.getQueryData(queryKey);
-    if (!canStartAnalysis(current, controllers.current.size > 0)) return null;
-    const controller = new AbortController();
-    controllers.current.set('analysis', controller);
-    setAnalysisError('');
-    setAnalysisStage(current.saved ? 'analyzing' : 'saving');
-
-    try {
-      const result = await analyze({
-        reviewId,
-        draft: current,
-        signal: controller.signal,
-        onSaved: (saved) =>
-          queryClient.setQueryData(queryKey, (value) =>
-            value.revision === current.revision ? { ...value, saved } : value,
-          ),
-        onAnalyzing: () => setAnalysisStage('analyzing'),
-      });
-      queryClient.setQueryData(queryKey, (value) =>
-        value.revision === current.revision ? { ...value, analysis: result } : value,
-      );
-      return controller.signal.aborted ? null : result;
-    } catch {
-      if (!controller.signal.aborted) setAnalysisError(analysisErrorMessage);
+  async function register() {
+    if (locked || failure?.uncertain || submission.isPending() || !hasRequiredDocuments(files))
       return null;
-    } finally {
-      controllers.current.delete('analysis');
-      resetAnalysis();
-      if (!controller.signal.aborted) setAnalysisStage(null);
+    setProgress(null);
+    setFailure(null);
+    try {
+      const review = await submission.submit({
+        files,
+        createReview: mutation.mutateAsync,
+        onProgress: setProgress,
+      });
+      if (review) {
+        queryClient.setQueryData(documentReviewKey(review.reviewId, mock), review);
+        setFiles({});
+      }
+      return review;
+    } catch (error) {
+      if (error?.code !== 'ERR_CANCELED' && error?.name !== 'AbortError') {
+        setFailure(registrationFailure(error));
+      }
+      return null;
     }
   }
 
-  const uploading = Object.values(transfers).some(({ file, error }) => file && !error);
-
   return {
-    draft,
-    transfers,
-    uploading,
-    analysisStage,
-    analysisError,
-    hasPendingWork: () => controllers.current.size > 0,
-    canAnalyze: canStartAnalysis(draft, uploading || Boolean(analysisStage)),
+    detail,
+    documents: reviewId ? reviewDocuments(detail.data) : files,
+    errors: fileErrors,
+    failure,
+    uploading: mutation.isPending,
+    progress,
+    locked,
+    canRegister:
+      !locked && !failure?.uncertain && !mutation.isPending && hasRequiredDocuments(files),
+    hasPendingWork: submission.isPending,
     attach,
     remove,
-    retry(kind) {
-      const file = transfers[kind]?.file;
-      if (file) return attach(kind, [file]);
-    },
-    start,
+    register,
   };
 }

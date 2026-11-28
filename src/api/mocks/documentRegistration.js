@@ -1,7 +1,3 @@
-const progressStart = 50;
-const progressDuration = 1150;
-const completionDelay = 160;
-
 function wait(milliseconds, signal) {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -9,10 +5,10 @@ function wait(milliseconds, signal) {
       return;
     }
     const onAbort = () => {
-      clearTimeout(timeout);
+      clearTimeout(timer);
       reject(signal.reason);
     };
-    const timeout = setTimeout(() => {
+    const timer = setTimeout(() => {
       signal.removeEventListener('abort', onAbort);
       resolve();
     }, milliseconds);
@@ -21,54 +17,86 @@ function wait(milliseconds, signal) {
 }
 
 const failures = {
-  'upload-error': { step: 'upload' },
-  unreadable: { step: 'upload', code: 'DOCUMENT_UNREADABLE' },
-  encrypted: { step: 'upload', code: 'DOCUMENT_ENCRYPTED' },
-  'save-error': { step: 'save' },
-  'analysis-error': { step: 'analysis' },
+  'upload-error': { status: 415, code: 'INVALID_FILE_TYPE' },
+  'save-error': { status: 400, code: 'INVALID_INPUT' },
+  unreadable: { status: 400, code: 'INVALID_INPUT' },
+  encrypted: { status: 400, code: 'INVALID_INPUT' },
+  'file-too-large': { status: 413, code: 'FILE_TOO_LARGE' },
+  'required-document-missing': { status: 409, code: 'REQUIRED_DOCUMENT_MISSING' },
 };
 
-// The selected step fails once per mounted mock. No file bytes leave the browser.
+let nextReviewId = 2;
+const reviews = new Map([
+  [
+    1,
+    {
+      reviewId: 1,
+      title: '예시 상품설명서.pdf',
+      status: 'IN_PROGRESS',
+      currentStep: 'DOC_UPLOAD',
+      documents: [
+        {
+          documentId: 1,
+          documentType: 'TERMS',
+          filename: '예시 보험약관.pdf',
+          version: 1,
+          fileSize: 2048,
+        },
+        {
+          documentId: 2,
+          documentType: 'PRODUCT_GUIDE',
+          filename: '예시 상품설명서.pdf',
+          version: 1,
+          fileSize: 4096,
+        },
+      ],
+    },
+  ],
+]);
+
+// Development only. Retain metadata for detail navigation within this browser session.
 export function createMockDocumentRegistrationApi(scenario) {
-  const failure = Object.hasOwn(failures, scenario) ? failures[scenario] : undefined;
   let failed = false;
 
-  function failOnce(step) {
-    if (failed || step !== failure?.step) return;
-    failed = true;
-    throw Object.assign(new Error('Simulated document registration failure.'), {
-      code: failure.code,
-    });
-  }
-
   return {
-    async upload({ file, onProgress, signal }) {
-      await wait(progressStart, signal);
-      const startedAt = performance.now();
-      let progress = 0;
-      while (progress < 100) {
-        await wait(50, signal);
-        progress = Math.min(100, ((performance.now() - startedAt) / progressDuration) * 100);
+    async getReview({ reviewId, signal }) {
+      await wait(120, signal);
+      const review = reviews.get(Number(reviewId));
+      if (!review) throw { status: 404, code: 'NOT_FOUND' };
+      return review;
+    },
+
+    async createReview({ files, signal, onProgress }) {
+      for (const progress of [0, 25, 50, 75, 100]) {
+        await wait(180, signal);
         onProgress(progress);
       }
-      await wait(completionDelay, signal);
-      failOnce('upload');
-      return {
-        id: crypto.randomUUID(),
-        name: file.name,
-        size: file.size,
-        lastModified: file.lastModified,
+      await wait(400, signal);
+      if (!failed && Object.hasOwn(failures, scenario)) {
+        failed = true;
+        throw failures[scenario];
+      }
+      const reviewId = nextReviewId++;
+      const documents = [
+        ['TERMS', files.policy],
+        ['PRODUCT_GUIDE', files.summary],
+      ].map(([documentType, file], index) => ({
+        documentId: reviewId * 2 - 1 + index,
+        documentType,
+        filename: file.name,
+        version: 1,
+        fileSize: file.size,
+      }));
+      const review = {
+        reviewId,
+        title: files.summary.name,
+        status: 'IN_PROGRESS',
+        currentStep: 'DOC_UPLOAD',
+        documents,
       };
-    },
-    async save({ operationId, signal }) {
-      await wait(1200, signal);
-      failOnce('save');
-      return { id: operationId };
-    },
-    async startAnalysis({ operationId, signal }) {
-      await wait(900, signal);
-      failOnce('analysis');
-      return { id: operationId };
+      reviews.set(reviewId, review);
+      if (scenario === 'response-lost') throw { status: null, code: 'ERR_NETWORK' };
+      return review;
     },
   };
 }
