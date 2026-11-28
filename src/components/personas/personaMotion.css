@@ -1,0 +1,203 @@
+@property --persona-progress-value {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+
+.persona-motion {
+  --persona-ease: cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
+.persona-option-label {
+  position: relative;
+  display: inline-block;
+}
+
+.persona-option-check {
+  position: absolute;
+  inset-inline-end: calc(100% + 0.25em);
+  opacity: 0;
+  scale: 0.9;
+}
+
+.persona-option[aria-pressed='true'] {
+  border-color: #c9dfed;
+}
+
+.persona-option[aria-pressed='true'] .persona-option-label {
+  translate: 0.45em;
+}
+
+.persona-option[aria-pressed='true'] .persona-option-check {
+  opacity: 1;
+  scale: 1;
+}
+
+@media (hover: hover) {
+  .persona-action--secondary:hover:enabled,
+  .persona-option:hover {
+    border-color: #b5d2e4;
+    background-color: #f1f7fb;
+  }
+
+  .persona-option[aria-pressed='true']:hover {
+    background-color: #e0eff8;
+  }
+}
+
+.persona-action--primary:active:enabled {
+  background-color: #004c80;
+}
+
+.persona-action--secondary:active:enabled,
+.persona-option:active {
+  background-color: #dceef9;
+}
+
+.persona-guidance {
+  display: grid;
+}
+
+.persona-guidance > span {
+  grid-area: 1 / 1;
+}
+
+.persona-guidance > [aria-hidden='true'] {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.persona-answer-list {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #c7dbe8 transparent;
+}
+
+.persona-status-card:has(.persona-status-action) {
+  padding-bottom: calc(12 * var(--review-pixel));
+}
+
+.persona-progress-fill {
+  --persona-progress-value: var(--persona-progress-target, 0);
+
+  /* Clamp immediately if a later response reports a lower value. */
+  transform: scaleX(min(var(--persona-progress-value), var(--persona-progress-target, 0)));
+  transform-origin: left;
+}
+
+.persona-indeterminate {
+  width: 24%;
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .persona-screen {
+    animation: persona-fade-in 250ms var(--persona-ease) both;
+  }
+
+  .persona-content-fade {
+    animation: persona-fade-in 200ms var(--persona-ease) both;
+  }
+
+  .persona-motion[data-report-ready] {
+    animation: persona-fade-out 200ms ease-in calc(var(--persona-report-delay) - 200ms) forwards;
+  }
+
+  .persona-action,
+  .persona-option {
+    transition:
+      background-color 200ms ease,
+      border-color 200ms ease,
+      color 150ms ease,
+      opacity 150ms ease,
+      translate 150ms var(--persona-ease);
+  }
+
+  .persona-action:active:enabled,
+  .persona-option:active {
+    translate: 0 1px;
+  }
+
+  .persona-option-label {
+    transition: translate 150ms var(--persona-ease);
+  }
+
+  .persona-option-check {
+    transition:
+      opacity 150ms ease,
+      scale 150ms var(--persona-ease);
+  }
+
+  .persona-guidance > [aria-hidden='false'] {
+    transition: opacity 120ms ease-out 80ms;
+  }
+
+  .persona-guidance > [aria-hidden='true'] {
+    transition:
+      opacity 80ms ease-in,
+      visibility 0s linear 80ms;
+  }
+
+  .persona-answer-list {
+    scroll-behavior: smooth;
+  }
+
+  .persona-progress-fill {
+    transition: --persona-progress-value 400ms var(--persona-ease);
+  }
+
+  .persona-progress-fill[data-stopped] {
+    transition: none;
+  }
+
+  .persona-indeterminate {
+    animation: persona-indeterminate 1.8s ease-in-out infinite;
+  }
+
+  .persona-running-dot {
+    animation: persona-breathe 2.2s ease-in-out infinite alternate;
+  }
+
+  .persona-complete-check {
+    animation: persona-complete-check 500ms var(--persona-ease) both;
+  }
+}
+
+@keyframes persona-fade-in {
+  from {
+    opacity: 0.4;
+  }
+}
+
+@keyframes persona-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes persona-indeterminate {
+  from {
+    translate: -100%;
+  }
+
+  to {
+    translate: 420%;
+  }
+}
+
+@keyframes persona-breathe {
+  from {
+    opacity: 0.45;
+  }
+
+  to {
+    opacity: 0.95;
+  }
+}
+
+@keyframes persona-complete-check {
+  from {
+    opacity: 0;
+    scale: 0.9;
+  }
+}

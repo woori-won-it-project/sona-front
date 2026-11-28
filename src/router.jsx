@@ -5,6 +5,7 @@ import NotFoundPage from '@/pages/NotFoundPage';
 import LoginPage from '@/pages/LoginPage';
 import DocumentRegistrationPage from '@/pages/DocumentRegistrationPage';
 import QuestionSelectionPage from '@/pages/QuestionSelectionPage';
+import PersonaConfigurationPage from '@/pages/PersonaConfigurationPage';
 
 export const router = createBrowserRouter([
   { path: '/', loader: () => replace('/login') },
@@ -12,6 +13,7 @@ export const router = createBrowserRouter([
   { path: '/documents', element: <DocumentRegistrationPage /> },
   { path: '/documents/:reviewId', element: <DocumentRegistrationPage /> },
   { path: '/questions/:reviewId', element: <QuestionSelectionPage /> },
+  { path: '/personas/:reviewId', element: <PersonaConfigurationPage /> },
   {
     element: <AppLayout />,
     children: [
